@@ -1,0 +1,424 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>SonicPay Final</title>
+    <style>
+        :root { --bg: #121212; --surface: #1e1e1e; --primary: #00E676; --text: #ffffff; --err: #ff5252; }
+        body { background-color: var(--bg); color: var(--text); font-family: monospace; margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+        /* LAYOUT */
+        .container { display: flex; flex-direction: column; height: 100%; padding: 15px; box-sizing: border-box; }
+        
+        /* HEADER / NAV */
+        .header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; border-bottom: 1px solid #333; padding-bottom: 10px; }
+        .brand { font-size: 1.2rem; font-weight: bold; }
+        .brand span { color: var(--primary); }
+        .btn-small { background: #333; color: #fff; border: none; padding: 5px 10px; border-radius: 5px; cursor: pointer; }
+
+        /* CONTENT AREAS */
+        .screen { display: none; flex-direction: column; flex: 1; }
+        .screen.active { display: flex; }
+
+        /* FORMS */
+        .input-group { margin-bottom: 15px; }
+        label { display: block; color: #888; font-size: 0.8rem; margin-bottom: 5px; }
+        input { width: 100%; background: #222; border: 1px solid #444; color: #fff; padding: 10px; font-family: monospace; font-size: 1.1rem; box-sizing: border-box; }
+        
+        .btn-main { width: 100%; padding: 15px; background: var(--primary); color: #000; font-weight: bold; border: none; border-radius: 8px; font-size: 1.1rem; cursor: pointer; margin-top: 10px; }
+        .btn-main:disabled { opacity: 0.5; background: #555; }
+
+        /* --- DEBUG & STREAMING INFO --- */
+        .monitor-panel { background: #000; border: 1px solid #333; border-radius: 8px; padding: 10px; margin-top: auto; display: flex; flex-direction: column; gap: 10px; }
+        
+        /* Spectrum Visualizer */
+        .spectrum { display: flex; align-items: flex-end; justify-content: space-between; height: 60px; border-bottom: 1px dashed #444; position: relative; }
+        .bar-container { display: flex; flex-direction: column; align-items: center; width: 5%; }
+        .bar { width: 100%; background: #444; transition: height 0.05s; }
+        .bar.trigger { background: var(--primary); } 
+        
+        /* Threshold Line */
+        .thresh-line { position: absolute; bottom: 35%; width: 100%; height: 1px; background: rgba(255, 0, 0, 0.5); z-index: 10; pointer-events: none; }
+
+        /* Console Log */
+        #console-log { height: 100px; overflow-y: scroll; font-size: 0.7rem; color: #aaa; border-top: 1px solid #333; padding-top: 5px; }
+        .log-entry { margin-bottom: 2px; }
+        .log-err { color: var(--err); }
+        .log-succ { color: var(--primary); }
+
+        /* STATES */
+        .status-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; background: #333; font-size: 0.8rem; margin-bottom: 10px; }
+        .status-badge.rx { background: var(--primary); color: black; animation: pulse 1s infinite; }
+
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <div class="header">
+            <div class="brand">Sonic<span class="logo-span">Pay</span> <span style="font-size:0.7rem">FINAL</span></div>
+            <button class="btn-small" onclick="location.reload()">Reset</button>
+        </div>
+
+        <div id="screen-menu" class="screen active">
+            <p style="color:#888; text-align:center;">Select Role</p>
+            <button class="btn-main" onclick="setRole('merchant')" style="background:#333; color:white; border:1px solid #555">Merchant (Sender)</button>
+            <button class="btn-main" onclick="setRole('user')">Customer (Receiver)</button>
+            <div style="margin-top:20px; font-size:0.75rem; color:#666; text-align:center;">
+                Ensure volume is MAX.<br>
+                Requires HTTPS or Localhost.
+            </div>
+        </div>
+
+        <div id="screen-merchant" class="screen">
+            <div class="status-badge">TX MODE</div>
+            <div class="input-group">
+                <label>Merchant ID</label>
+                <input type="number" id="tx-id" value="101">
+            </div>
+            <div class="input-group">
+                <label>Amount ($)</label>
+                <input type="number" id="tx-amt" value="50">
+            </div>
+            <button class="btn-main" id="btn-send" onclick="transmit()">SEND DATA</button>
+        </div>
+
+        <div id="screen-user" class="screen">
+            <div id="rx-state" class="status-badge">MICROPHONE OFF</div>
+            
+            <div style="text-align:center; margin: 20px 0;">
+                <h1 id="rx-result" style="margin:0; font-size:2.5rem;">--</h1>
+                <div id="rx-detail" style="color:#888;">Waiting for sound...</div>
+            </div>
+        </div>
+
+        <div id="debug-panel" class="monitor-panel" style="display:none;">
+            <div style="font-size:0.7rem; color:#888;">SPECTRUM ANALYZER (L: Start | R: Stop)</div>
+            <div class="spectrum" id="spectrum-viz">
+                <div class="thresh-line"></div>
+            </div>
+            <div id="console-log">
+                <div class="log-entry">System Ready...</div>
+            </div>
+        </div>
+    </div>
+
+<script>
+    // --- CONFIGURATION ---
+    const SECRET_KEY = "SonicTest"; 
+    
+    // [CHANGE 1] INAUDIBLE FREQUENCIES (Ultrasonic Range)
+    const BASE_FREQ  = 11500; // Moved up from 15200 to be inaudible
+    const STEP_FREQ  = 150; 
+    const F_START    = 10200; // Start Flag High
+    const F_STOP     = 20500; // Stop Flag High
+    
+    // [PRESERVED] High Gate
+    const GATE       = 100; 
+
+    // --- GLOBALS ---
+    let ctx, analyser, isRx = false;
+    let logEl = document.getElementById('console-log');
+
+    // --- LOGGING ---
+    function log(msg, type="") {
+        const div = document.createElement('div');
+        div.className = "log-entry " + (type==="err"?"log-err":type==="succ"?"log-succ":"");
+        const time = new Date().toISOString().split('T')[1].split('.')[0];
+        div.innerText = `[${time}] ${msg}`;
+        logEl.appendChild(div);
+        logEl.scrollTop = logEl.scrollHeight;
+        console.log(msg);
+    }
+
+    // --- NAVIGATION ---
+    function setRole(role) {
+        document.getElementById('screen-menu').classList.remove('active');
+        document.getElementById('debug-panel').style.display = 'flex';
+        initAudio();
+
+        if(role === 'merchant') {
+            document.getElementById('screen-merchant').classList.add('active');
+            log("Mode: Merchant (TX)");
+        } else {
+            document.getElementById('screen-user').classList.add('active');
+            log("Mode: User (RX)");
+            startRx();
+        }
+    }
+
+    function initAudio() {
+        if(!ctx) {
+            ctx = new (window.AudioContext || window.webkitAudioContext)();
+            log("AudioContext Initialized. State: " + ctx.state);
+        }
+        if(ctx.state === 'suspended') {
+            ctx.resume().then(() => log("AudioContext Resumed"));
+        }
+    }
+
+    // --- TRANSMITTER ---
+    function transmit() {
+        const id = document.getElementById('tx-id').value;
+        const amt = document.getElementById('tx-amt').value;
+
+        // 1. Prepare Data
+        log(`Generating Payload: ID=${id}, Amt=${amt}`);
+        const hex = packData(id, amt); 
+        log(`Raw Hex: ${hex.raw}`);
+        log(`Encrypted: ${hex.enc}`);
+
+        // 2. Play Audio
+        const btn = document.getElementById('btn-send');
+        btn.disabled = true;
+        
+        let t = ctx.currentTime + 0.1;
+        
+        // [CHANGE 2] ADDED DELAY: GAP increased to 0.15s (150ms)
+        // This ensures the receiver debounce logic (150ms) triggers for consecutive identical bits
+        const DUR = 0.08; 
+        const GAP = 0.01; 
+
+        // Start Flag
+        playTone(F_START, t, DUR); t+= DUR+GAP;
+        
+        // Data
+        for(let char of hex.enc) {
+            const val = parseInt(char, 16);
+            const f = BASE_FREQ + (val * STEP_FREQ);
+            playTone(f, t, DUR);
+            t+= DUR+GAP; // 150ms silence between bits
+        }
+
+        // Stop Flag (Long duration)
+        playTone(F_STOP, t, DUR * 3);
+
+        setTimeout(() => {
+            btn.disabled = false;
+            log("Transmission Complete");
+        }, (t - ctx.currentTime)*1000 + 400);
+    }
+
+    function playTone(f, t, d) {
+        const o = ctx.createOscillator();
+        const g = ctx.createGain();
+        o.frequency.value = f;
+        o.connect(g); g.connect(ctx.destination);
+        g.gain.setValueAtTime(0, t);
+        g.gain.linearRampToValueAtTime(0.5, t + 0.01);
+        g.gain.linearRampToValueAtTime(0, t + d);
+        o.start(t); o.stop(t + d + 0.05);
+    }
+
+    // --- RECEIVER ---
+    async function startRx() {
+        if(isRx) return;
+        
+        const viz = document.getElementById('spectrum-viz');
+        viz.innerHTML = '<div class="thresh-line"></div>';
+        for(let i=0; i<18; i++) {
+            const d = document.createElement('div');
+            d.className = 'bar-container';
+            d.innerHTML = `<div class="bar" id="bar-${i}" style="height:0%"></div>`;
+            viz.appendChild(d);
+        }
+
+        try {
+            log("Requesting Mic Access...");
+            const stream = await navigator.mediaDevices.getUserMedia({ 
+                audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } 
+            });
+            log("Mic Access GRANTED", "succ");
+            
+            const src = ctx.createMediaStreamSource(stream);
+            analyser = ctx.createAnalyser();
+            analyser.fftSize = 2048;
+            analyser.smoothingTimeConstant = 0.5;
+
+            const f = ctx.createBiquadFilter();
+            f.type = 'highpass'; f.frequency.value = 15000;
+            src.connect(f); f.connect(analyser);
+
+            isRx = true;
+            document.getElementById('rx-state').innerText = "LISTENING";
+            document.getElementById('rx-state').classList.add('rx');
+            
+            loop();
+        } catch(e) {
+            log("Mic Error: " + e.message, "err");
+            alert("Mic Access Denied. Check Settings.");
+        }
+    }
+
+    let rxBuffer = "";
+    let rxState = "IDLE";
+    let lastTime = 0;
+
+    function loop() {
+        if(!isRx) return;
+        requestAnimationFrame(loop);
+
+        const data = new Uint8Array(analyser.frequencyBinCount);
+        analyser.getByteFrequencyData(data);
+        const hzPerBin = ctx.sampleRate / analyser.fftSize;
+
+        const getVol = (freq) => {
+            const i = Math.floor(freq / hzPerBin);
+            return Math.max(data[i-1]||0, data[i], data[i+1]||0);
+        };
+
+        const vStart = getVol(F_START);
+        const vStop = getVol(F_STOP);
+        
+        // Update Viz
+        document.getElementById(`bar-0`).style.height = (vStart/255*100)+"%";
+        if(vStart > GATE) document.getElementById(`bar-0`).classList.add('trigger');
+        else document.getElementById(`bar-0`).classList.remove('trigger');
+
+        document.getElementById(`bar-17`).style.height = (vStop/255*100)+"%";
+        if(vStop > GATE) document.getElementById(`bar-17`).classList.add('trigger');
+        else document.getElementById(`bar-17`).classList.remove('trigger');
+
+        let maxVol = 0;
+        let maxIdx = -1;
+
+        for(let i=0; i<16; i++) {
+            const freq = BASE_FREQ + (i * STEP_FREQ);
+            const v = getVol(freq);
+            const bar = document.getElementById(`bar-${i+1}`);
+            bar.style.height = (v/255*100)+"%";
+            if(v > GATE) {
+                bar.classList.add('trigger');
+                if(v > maxVol) { maxVol = v; maxIdx = i; }
+            } else { bar.classList.remove('trigger'); }
+        }
+
+        // --- STATE MACHINE ---
+        const now = Date.now();
+
+        if (rxState === "IDLE") {
+            if (vStart > GATE && now - lastTime > 500) {
+                log("Signal Detected: START FLAG", "succ");
+                rxState = "RX";
+                
+                // [PRESERVED] Clear Previous Data
+                rxBuffer = ""; 
+                document.getElementById('rx-result').innerText = "--";
+                document.getElementById('rx-detail').innerText = "Receiving Data...";
+                
+                lastTime = now;
+                document.getElementById('rx-state').innerText = "RECEIVING...";
+            }
+        } 
+        else if (rxState === "RX") {
+            // Check for Stop (Fallback)
+            if (vStop > GATE && now - lastTime > 50) {
+                log("Signal Detected: STOP FLAG");
+                processData();
+                rxState = "IDLE";
+                document.getElementById('rx-state').innerText = "PROCESSING";
+            } 
+            // Check for Data
+            else if (now - lastTime > 80) {
+                if(maxIdx > -1 && maxVol > GATE) {
+                    const char = maxIdx.toString(16).toUpperCase();
+                    // Debounce: wait > 150ms before accepting same char
+                    // The GAP is now 150ms, so this will pass for consecutive bits
+                    if(rxBuffer.slice(-1) !== char || now - lastTime > 150) {
+                        rxBuffer += char;
+                        log(`Rx Nibble: ${char} (Vol:${maxVol})`);
+                        lastTime = now;
+
+                        // [PRESERVED] 76-bit Fast Close
+                        if (rxBuffer.length >= 19) {
+                            log("Full Payload (19 chars) Received - Fast Close", "succ");
+                            processData();
+                            rxState = "IDLE"; 
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    function processData() {
+        log(`Buffer Complete: ${rxBuffer}`);
+        const clean = rxBuffer.substr(0, 19);
+        
+        if(clean.length < 19) {
+            log("Error: Data too short", "err");
+            document.getElementById('rx-result').innerText = "ERR";
+            document.getElementById('rx-detail').innerText = "Incomplete Transmission";
+            setTimeout(()=> document.getElementById('rx-state').innerText="LISTENING", 1000);
+            return;
+        }
+
+        const decoded = unpackData(clean);
+        if(decoded) {
+            log("CRC Verified!", "succ");
+            document.getElementById('rx-result').innerText = "$"+decoded.amt;
+            document.getElementById('rx-detail').innerText = `ID: ${decoded.id} | Validated`;
+            if(navigator.vibrate) navigator.vibrate([100,50,100]);
+        } else {
+            log("CRC FAILED", "err");
+            document.getElementById('rx-result').innerText = "CRC";
+            document.getElementById('rx-detail').innerText = "Checksum Mismatch";
+        }
+        setTimeout(()=> document.getElementById('rx-state').innerText="LISTENING", 2000);
+    }
+
+    function packData(id, amt) {
+        const hId = parseInt(id).toString(16).padStart(3,'0');
+        const hAmt = parseInt(amt).toString(16).padStart(5,'0');
+        const hTime = Math.floor(Date.now()/1000).toString(16).padStart(8,'0');
+        const hPad = "A"; 
+        const raw = hId + hAmt + hTime + hPad; 
+        const crc = crc8(raw).toString(16).padStart(2,'0').toUpperCase();
+        const full = raw + crc;
+        return { raw: full.toUpperCase(), enc: encrypt(full) };
+    }
+
+    function unpackData(encHex) {
+        const raw = decrypt(encHex);
+        const payload = raw.substr(0, 17);
+        const rxCrc = raw.substr(17, 2);
+        const calcCrc = crc8(payload).toString(16).padStart(2,'0').toUpperCase();
+        if(rxCrc === calcCrc) {
+            return {
+                id: parseInt(payload.substr(0,3), 16),
+                amt: parseInt(payload.substr(3,5), 16)
+            };
+        }
+        return null;
+    }
+
+    function crc8(s) {
+        let c = 0;
+        for(let i=0; i<s.length; i++) {
+            let b = parseInt(s[i], 16);
+            for(let j=0; j<4; j++) {
+                let m = (c ^ b) & 1;
+                c >>= 1; if(m) c ^= 0x8C;
+                b >>= 1;
+            }
+        }
+        return c;
+    }
+
+    function encrypt(h) {
+        let r=""; for(let i=0;i<h.length;i++) {
+            r += ((parseInt(h[i],16) + SECRET_KEY.charCodeAt(i%SECRET_KEY.length))%16).toString(16);
+        } return r.toUpperCase();
+    }
+    
+    function decrypt(h) {
+        let r=""; for(let i=0;i<h.length;i++) {
+            let d = parseInt(h[i],16) - (SECRET_KEY.charCodeAt(i%SECRET_KEY.length)%16);
+            if(d<0) d+=16; r += d.toString(16);
+        } return r.toUpperCase();
+    }
+</script>
+</body>
+</html>
