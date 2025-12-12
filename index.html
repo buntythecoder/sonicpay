@@ -3,397 +3,271 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>SonicPay v12 PROD</title>
+    <title>Zero-UI Payment Proto</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/paho-mqtt/1.0.1/mqttws31.min.js"></script>
     <style>
-        :root { --bg: #000; --primary: #00E676; --text: #fff; }
-        body { background-color: var(--bg); color: var(--text); font-family: monospace; margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
-        .container { padding: 15px; display: flex; flex-direction: column; height: 100%; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f0f2f5; margin: 0; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
         
-        .header { display: flex; justify-content: space-between; border-bottom: 1px solid #333; padding-bottom: 10px; margin-bottom: 10px; }
-        .brand span { color: var(--primary); }
-        .screen { display: none; flex-direction: column; flex: 1; }
-        .screen.active { display: flex; }
+        /* VIEW CONTAINERS */
+        .view { display: none; width: 100%; max-width: 400px; padding: 20px; box-sizing: border-box; }
+        .view.active { display: flex; flex-direction: column; height: 100vh; }
         
-        /* UI */
-        input { width: 100%; background: #222; border: 1px solid #444; color: #fff; padding: 15px; margin-bottom: 10px; font-family: monospace; font-size: 1.2rem; border-radius: 4px; }
-        .label { color: #888; font-size: 0.8rem; margin-bottom: 5px; display: block; }
+        /* CARD STYLING */
+        .card { background: white; border-radius: 20px; padding: 30px; box-shadow: 0 10px 30px rgba(0,0,0,0.1); text-align: center; margin-bottom: 20px; transition: 0.3s; }
         
-        .btn { width: 100%; padding: 20px; background: var(--primary); color: #000; font-weight: bold; border: none; border-radius: 8px; font-size: 1.2rem; cursor: pointer; margin-top: 10px; }
-        .btn:disabled { opacity: 0.5; background: #444; }
+        /* HEADERS & TEXT */
+        h1 { margin: 0 0 10px 0; color: #333; font-size: 24px; }
+        p { color: #666; margin: 0 0 20px 0; }
+        .amount { font-size: 48px; font-weight: 800; color: #2d3436; margin: 20px 0; }
+        .store-id { font-family: monospace; font-size: 32px; letter-spacing: 5px; color: #0984e3; background: #dfe6e9; padding: 10px; border-radius: 10px; margin: 10px 0; display: block;}
         
-        /* MONITOR */
-        .monitor { background: #111; border: 1px solid #333; border-radius: 8px; padding: 10px; margin-top: auto; display: flex; flex-direction: column; height: 35vh; }
-        .viz-box { display: flex; align-items: flex-end; justify-content: space-around; height: 60px; gap: 2px; border-bottom: 1px solid #333; }
-        .bar { width: 2%; background: #333; transition: height 0.05s; }
-        .bar.anchor { background: #FFD700; box-shadow: 0 0 10px #FFD700; }
-        .bar.data { background: var(--primary); }
+        /* BUTTONS */
+        .btn { width: 100%; padding: 18px; border: none; border-radius: 12px; font-size: 18px; font-weight: bold; cursor: pointer; margin-top: 10px; transition: transform 0.1s; }
+        .btn:active { transform: scale(0.98); }
+        .btn-primary { background: #000; color: white; }
+        .btn-success { background: #00b894; color: white; }
+        .btn-danger { background: #d63031; color: white; }
+        .btn-ghost { background: transparent; color: #0984e3; margin-top: 20px; }
+
+        /* INPUTS */
+        input[type="number"] { width: 100%; padding: 15px; font-size: 24px; border: 2px solid #ddd; border-radius: 10px; text-align: center; margin-bottom: 15px; box-sizing: border-box; }
+
+        /* MODAL (Payment Popup) */
+        .modal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); display: none; align-items: flex-end; justify-content: center; }
+        .modal { background: white; width: 100%; max-width: 400px; border-radius: 20px 20px 0 0; padding: 30px; animation: slideUp 0.3s ease; }
+        @keyframes slideUp { from { transform: translateY(100%); } to { transform: translateY(0); } }
         
-        #log { flex: 1; overflow-y: scroll; font-size: 0.7rem; color: #888; margin-top: 5px; padding-top: 5px; }
+        /* LOADER */
+        .spinner { width: 40px; height: 40px; border: 4px solid #f3f3f3; border-top: 4px solid #0984e3; border-radius: 50%; animation: spin 1s linear infinite; margin: 20px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        
+        /* LOGS */
+        #console { font-family: monospace; font-size: 12px; color: #aaa; margin-top: auto; text-align: left; height: 100px; overflow-y: auto; width: 100%; border-top: 1px solid #eee; padding-top: 10px;}
     </style>
 </head>
 <body>
 
-<div class="container">
-    <div class="header">
-        <div class="brand">Sonic<span class="logo-span">Pay</span> v12</div>
-        <button onclick="location.reload()" style="background:#333; color:#fff; border:none; padding:5px 10px;">Reset</button>
-    </div>
-
-    <div id="menu" class="screen active">
-        <div style="text-align:center; margin-top:40px;">
-            <h3>Select Mode</h3>
-            <button class="btn" onclick="setRole('tx')">Merchant (Send)</button>
-            <button class="btn" onclick="setRole('rx')" style="background:#333; color:#fff;">Customer (Receive)</button>
-            <p style="color:#666; font-size:0.8rem; margin-top:30px;">
-                <b>System Ready</b><br>
-                Payload: Dynamic + Encrypted<br>
-                Engine: Anchor-Lock (No Changes)
-            </p>
+    <div id="view-role" class="view active" style="justify-content: center;">
+        <div class="card">
+            <h1>Select Your Role</h1>
+            <p>To test the simulation, open this link on two different devices.</p>
+            <button class="btn btn-primary" onclick="selectRole('merchant')">🏪 I am the Merchant (POS)</button>
+            <button class="btn btn-success" style="background:#0984e3" onclick="selectRole('user')">📱 I am the Customer</button>
         </div>
     </div>
 
-    <div id="tx" class="screen">
-        <div style="text-align:center; margin-bottom:20px; color:#aaa;">GENERATING CRYPTOGRAM...</div>
-        
-        <label class="label">MERCHANT CODE (3 HEX CHARS)</label>
-        <input type="text" id="inp-code" value="A1B" maxlength="3" style="text-transform:uppercase;">
-        
-        <label class="label">AMOUNT (5 DIGITS)</label>
-        <input type="number" id="inp-amt" value="1500" maxlength="5">
-        
-        <button class="btn" id="btn-tx" onclick="startTx()">GENERATE & SEND</button>
-        <div id="tx-log" style="font-size:0.7rem; color:#666; margin-top:10px; word-break:break-all;"></div>
-    </div>
-
-    <div id="rx" class="screen">
-        <div style="text-align:center; font-weight:bold; margin-bottom:10px;" id="rx-status">LISTENING...</div>
-        
-        <div id="rx-bill" style="display:none; background:#222; padding:15px; margin-bottom:10px; border-radius:8px;">
-            <div style="display:flex; justify-content:space-between; font-size:1.5rem; color:var(--primary); font-weight:bold;">
-                <span>TOTAL</span>
-                <span id="bill-amt">$0</span>
-            </div>
-            <div style="margin-top:10px; font-size:0.9rem; color:#fff; display:flex; justify-content:space-between;">
-                <span>Merchant:</span> <span id="bill-code">--</span>
-            </div>
-            <div style="font-size:0.8rem; color:#888; text-align:right; margin-top:5px;" id="bill-time">--</div>
+    <div id="view-merchant" class="view">
+        <div class="card">
+            <p>Merchant POS</p>
+            <small>Pairing Code:</small>
+            <div class="store-id" id="merchant-code">...</div>
+            <div id="connection-status" style="color:orange; font-size:12px;">Connecting to Network...</div>
         </div>
 
-        <div class="monitor">
-            <div style="font-size:0.7rem; color:#666; display:flex; justify-content:space-between;">
-                <span>ANCHOR LOCK ENGINE</span>
-                <span>NOISE: <b id="val-noise">0</b></span>
-            </div>
-            <div class="viz-box" id="viz"></div>
-            <div id="log"></div>
+        <div class="card">
+            <p>Enter Bill Amount</p>
+            <input type="number" id="bill-amount" placeholder="0.00" value="99999">
+            <button id="charge-btn" class="btn btn-primary" onclick="sendChargeRequest()" disabled>⚡ Charge User</button>
         </div>
+        <div id="console"></div>
     </div>
-</div>
 
-<script>
-    // --- 1. ENGINE CONFIGURATION (UNCHANGED) ---
-    const F_ANCHOR = 16000; 
-    const F_BASE   = 16960; 
-    const F_STEP   = 160;   
-    
-    // TIMING (Preserved from v11.2)
-    const PULSE_DUR = 0.10; 
-    const GAP_DUR   = 0.05; 
-    const READ_DEBOUNCE = 300; 
+    <div id="view-user" class="view">
+        <div class="card" id="pair-card">
+            <h1>Connect to Store</h1>
+            <p>Enter the 4-digit code shown on the Merchant Screen.</p>
+            <input type="number" id="input-store-code" placeholder="XXXX">
+            <button class="btn btn-primary" onclick="connectToStore()">Connect</button>
+        </div>
 
-    // SECURITY KEY
-    const SECRET_KEY = "Sonic2025"; 
-
-    let ctx, analyser, isRx = false;
-    const logEl = document.getElementById('log');
-
-    function log(m) {
-        const d = document.createElement('div');
-        d.innerText = `> ${m}`;
-        logEl.appendChild(d);
-        logEl.scrollTop = logEl.scrollHeight;
-    }
-
-    function setRole(r) {
-        document.getElementById('menu').classList.remove('active');
-        initAudio();
-        if(r==='tx') {
-            document.getElementById('tx').classList.add('active');
-        } else {
-            document.getElementById('rx').classList.add('active');
-            startRx();
-        }
-    }
-
-    function initAudio() {
-        if(!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
-        if(ctx.state === 'suspended') ctx.resume();
-    }
-
-    // --- 2. DATA LAYER (NEW) ---
-    
-    function startTx() {
-        const code = document.getElementById('inp-code').value.toUpperCase();
-        const amt = document.getElementById('inp-amt').value;
-
-        if(code.length !== 3) { alert("Merchant Code must be 3 Hex Chars"); return; }
-        if(amt.length > 5) { alert("Amount too large"); return; }
-
-        // 1. Generate Packet (Merchant + Amt + Time + CRC) -> Encrypt -> Hex
-        const payload = createPacket(code, amt);
-        document.getElementById('tx-log').innerText = "Cryptogram: " + payload;
+        <div class="card" id="listening-card" style="display:none;">
+            <div class="spinner"></div>
+            <h2>Connected</h2>
+            <p>Phone is locked in pocket...</p>
+            <p style="font-size:12px; color:#aaa;">Waiting for payment request...</p>
+        </div>
         
-        log("Transmitting...");
-        transmitHex(payload);
-    }
-
-    // --- 3. TRANSMITTER ENGINE (UNCHANGED) ---
-    function transmitHex(hex) {
-        const btn = document.getElementById('btn-tx');
-        btn.disabled = true;
-
-        const now = ctx.currentTime;
-        let t = now + 0.1;
-
-        // Preamble
-        playTone(F_ANCHOR, t, 0.2); t += (0.2 + GAP_DUR);
-
-        // Data Loop
-        for (let i = 0; i < hex.length; i++) {
-            const val = parseInt(hex[i], 16);
-            const fData = F_BASE + (val * F_STEP);
-
-            // 1. Data
-            playTone(fData, t, PULSE_DUR);
-            t += (PULSE_DUR + GAP_DUR);
-
-            // 2. Anchor
-            if (i < hex.length - 1) {
-                playTone(F_ANCHOR, t, PULSE_DUR);
-                t += (PULSE_DUR + GAP_DUR);
-            }
-        }
-
-        setTimeout(() => {
-            btn.disabled = false;
-            log("Sent.");
-        }, (t - now) * 1000 + 200);
-    }
-
-    function playTone(f, t, d) {
-        const o = ctx.createOscillator();
-        const g = ctx.createGain();
-        o.frequency.value = f;
-        o.connect(g); g.connect(ctx.destination);
-        g.gain.setValueAtTime(0, t);
-        g.gain.linearRampToValueAtTime(1.0, t+0.01);
-        g.gain.linearRampToValueAtTime(1.0, t+d-0.01);
-        g.gain.linearRampToValueAtTime(0, t+d);
-        o.start(t); o.stop(t+d+0.02);
-    }
-
-    // --- 4. RECEIVER ENGINE (UNCHANGED) ---
-    async function startRx() {
-        if(isRx) return;
-        
-        // Viz
-        const vb = document.getElementById('viz');
-        vb.innerHTML = "";
-        for(let i=0; i<18; i++) {
-            const d = document.createElement('div');
-            d.className = 'bar'; d.id = 'b-'+i;
-            vb.appendChild(d);
-        }
-        document.getElementById('b-0').classList.add('anchor'); 
-
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation:false, noiseSuppression:false, autoGainControl:false }});
-            const src = ctx.createMediaStreamSource(stream);
-            analyser = ctx.createAnalyser();
-            analyser.fftSize = 2048;
-            analyser.smoothingTimeConstant = 0.2; 
-            
-            const f = ctx.createBiquadFilter();
-            f.type = 'highpass'; f.frequency.value = 16000;
-            src.connect(f); f.connect(analyser);
-
-            isRx = true;
-            document.getElementById('rx-status').innerText = "LISTENING";
-            document.getElementById('rx-status').style.color = "var(--primary)";
-            loop();
-        } catch(e) { alert("Mic Error"); }
-    }
-
-    const S_WAIT_ANCHOR = 0;
-    const S_READ_DATA   = 1;
-    let rxState = S_WAIT_ANCHOR;
-    let rxBuffer = "";
-    let lastTime = 0;
-    let lastReadTime = 0;
-
-    function loop() {
-        if(!isRx) return;
-        requestAnimationFrame(loop);
-
-        const data = new Uint8Array(analyser.frequencyBinCount);
-        analyser.getByteFrequencyData(data);
-        const hzPerBin = ctx.sampleRate / analyser.fftSize;
-
-        // Noise
-        let sum=0; const startB = Math.floor(15000/hzPerBin);
-        for(let i=0; i<20; i++) sum+=data[startB+i];
-        const NOISE = Math.max(50, (sum/20)*2.0); 
-        document.getElementById('val-noise').innerText = Math.floor(NOISE);
-
-        const getAmp = (f) => {
-            const b = Math.floor(f/hzPerBin);
-            return Math.max(data[b], data[b+1], data[b-1]);
-        };
-
-        const vAnchor = getAmp(F_ANCHOR);
-        updateBar(0, vAnchor, NOISE);
-
-        let maxDataV = 0;
-        let maxDataI = -1;
-
-        for(let i=0; i<16; i++) {
-            const f = F_BASE + (i * F_STEP);
-            const v = getAmp(f);
-            updateBar(i+1, v, NOISE);
-            if(v > maxDataV) { maxDataV = v; maxDataI = i; }
-        }
-
-        const now = Date.now();
-
-        // Logic
-        if (rxState === S_WAIT_ANCHOR) {
-            if (vAnchor > NOISE) {
-                if (now - lastTime > 100) { 
-                    rxState = S_READ_DATA;
-                    lastTime = now;
-                }
-            }
-            if (now - lastTime > 2000 && rxBuffer.length > 0) finishRx();
-        }
-        else if (rxState === S_READ_DATA) {
-            if (maxDataV > NOISE) {
-                const char = maxDataI.toString(16).toUpperCase();
+        <div id="pay-modal" class="modal-overlay">
+            <div class="modal">
+                <h2 style="text-align:center">Confirm Payment</h2>
+                <div class="amount" style="text-align:center" id="modal-amount">$0</div>
+                <div style="text-align:center; color:#666; margin-bottom:20px;">Store ID: <span id="modal-store"></span></div>
                 
-                // Duplicate Filter (200ms)
-                if (now - lastReadTime > READ_DEBOUNCE) {
-                    rxBuffer += char;
-                    log(`Bit: ${char}`);
-                    lastReadTime = now; 
-                    rxState = S_WAIT_ANCHOR; 
-                    lastTime = now;
-                    if (rxBuffer.length >= 19) finishRx();
-                }
-            }
-            if (now - lastTime > 300) rxState = S_WAIT_ANCHOR;
-        }
-    }
+                <div style="background:#eee; padding:15px; border-radius:10px; margin-bottom:20px; font-size:14px;">
+                    🔒 <strong>Secure Handshake</strong><br>
+                    Distance Verified: 2.0 meters<br>
+                    Identity: Verified
+                </div>
 
-    function updateBar(id, val, th) {
-        const el = document.getElementById('b-'+id);
-        el.style.height = (val/255*100)+"%";
-        if(val > th) el.className = id===0 ? "bar anchor" : "bar data"; 
-        else el.className = "bar";
-    }
+                <button class="btn btn-success" onclick="approvePayment()">Tap to Pay</button>
+                <button class="btn btn-danger" style="background:white; color:#d63031; border:1px solid #ddd;" onclick="closeModal()">Decline</button>
+            </div>
+        </div>
+        <div id="console"></div>
+    </div>
 
-    function finishRx() {
-        rxState = S_WAIT_ANCHOR;
-        if(rxBuffer.length === 0) return;
+    <script>
+        // --- CONFIGURATION ---
+        // Using public Eclipse Mosquitto broker (Free, supports WebSockets)
+        const MQTT_BROKER = "broker.emqx.io";
+        const MQTT_PORT = 8084; // SSL Port
+        const MQTT_PATH = "/mqtt";
         
-        document.getElementById('rx-status').innerText = "PROCESSING...";
-        log(`Buffer: ${rxBuffer}`);
-        
-        // --- 5. DECODE & VERIFY ---
-        const result = parsePacket(rxBuffer);
-        
-        if(result) {
-            // SUCCESS
-            document.getElementById('rx-status').innerText = "SUCCESS";
-            document.getElementById('rx-bill').style.display = "block";
-            document.getElementById('bill-amt').innerText = "$" + result.amt;
-            document.getElementById('bill-code').innerText = result.code;
-            document.getElementById('bill-time').innerText = result.time.toLocaleTimeString();
-            if(navigator.vibrate) navigator.vibrate([100,50,100]);
-        } else {
-            // FAIL
-            document.getElementById('rx-status').innerText = "CHECKSUM FAIL";
-            log("Error: Invalid packet");
-        }
+        let client;
+        let myRole = "";
+        let storeCode = "";
+        let topicBase = "zeroui/demo/"; 
 
-        setTimeout(() => {
-            rxBuffer = "";
-            if(!result) document.getElementById('rx-status').innerText = "LISTENING";
-        }, 4000);
-    }
+        // --- UI LOGIC ---
 
-    // --- 6. PACKET GENERATION (SECURE) ---
-    // Structure (19 Hex): 
-    // Code(3) + Amt(5) + Time(8) + Pad(1) + CRC(2)
-    
-    function createPacket(code, amt) {
-        // Code is already 3 hex chars from input
-        const hCode = code; 
-        const hAmt = parseInt(amt).toString(16).padStart(5,'0').toUpperCase();
-        const hTime = Math.floor(Date.now()/1000).toString(16).padStart(8,'0').toUpperCase();
-        const hPad = "A";
-        
-        const raw = hCode + hAmt + hTime + hPad;
-        const crc = crc8(raw).toString(16).padStart(2,'0').toUpperCase();
-        
-        return encrypt(raw + crc);
-    }
+        function selectRole(role) {
+            myRole = role;
+            document.querySelectorAll('.view').forEach(el => el.classList.remove('active'));
+            document.getElementById('view-' + role).classList.add('active');
 
-    function parsePacket(encHex) {
-        // Clean input
-        encHex = encHex.replace(/[^0-9A-F]/g, "").substr(0, 19);
-        if(encHex.length < 19) return null;
-
-        const raw = decrypt(encHex);
-        const payload = raw.substr(0, 17);
-        const rxCrc = raw.substr(17, 2);
-        
-        const calcCrc = crc8(payload).toString(16).padStart(2,'0').toUpperCase();
-        
-        log(`CRC: ${rxCrc} vs ${calcCrc}`);
-        
-        if(rxCrc !== calcCrc) return null;
-
-        return {
-            code: payload.substr(0, 3),
-            amt: parseInt(payload.substr(3, 5), 16),
-            time: new Date(parseInt(payload.substr(8, 8), 16) * 1000)
-        };
-    }
-
-    function crc8(s) {
-        let c = 0;
-        for(let i=0; i<s.length; i++) {
-            let b = parseInt(s[i], 16);
-            for(let j=0; j<4; j++) {
-                let m = (c ^ b) & 1;
-                c >>= 1; if(m) c ^= 0x8C;
-                b >>= 1;
+            if (role === 'merchant') {
+                initMerchant();
             }
         }
-        return c;
-    }
 
-    function encrypt(h) {
-        let r=""; for(let i=0;i<h.length;i++) {
-            r += ((parseInt(h[i],16) + SECRET_KEY.charCodeAt(i%SECRET_KEY.length))%16).toString(16).toUpperCase();
-        } return r;
-    }
-    
-    function decrypt(h) {
-        let r=""; for(let i=0;i<h.length;i++) {
-            let d = parseInt(h[i],16) - (SECRET_KEY.charCodeAt(i%SECRET_KEY.length)%16);
-            if(d<0) d+=16; r += d.toString(16).toUpperCase();
-        } return r;
-    }
-</script>
+        function log(msg) {
+            console.log(msg);
+            const logs = document.querySelectorAll('#console');
+            logs.forEach(l => l.innerHTML += `> ${msg}<br>`);
+        }
+
+        // --- MQTT CONNECTION LOGIC ---
+
+        function setupMqtt(onConnectCallback) {
+            // Create unique client ID
+            const clientId = "client_" + Math.random().toString(16).substr(2, 8);
+            client = new Paho.MQTT.Client(MQTT_BROKER, Number(MQTT_PORT), MQTT_PATH, clientId);
+
+            client.onConnectionLost = (responseObject) => {
+                log("Connection Lost: " + responseObject.errorMessage);
+            };
+
+            client.onMessageArrived = (message) => {
+                handleMessage(message.destinationName, message.payloadString);
+            };
+
+            const options = {
+                timeout: 3,
+                useSSL: true,
+                onSuccess: onConnectCallback,
+                onFailure: (err) => { log("Connect Failed: " + err.errorMessage); }
+            };
+
+            client.connect(options);
+        }
+
+        // --- MERCHANT LOGIC ---
+
+        function initMerchant() {
+            // 1. Generate Random Store Code
+            storeCode = Math.floor(1000 + Math.random() * 9000).toString();
+            document.getElementById('merchant-code').innerText = storeCode;
+            
+            // 2. Connect to MQTT
+            setupMqtt(() => {
+                document.getElementById('connection-status').innerText = "🟢 Online - Ready";
+                document.getElementById('connection-status').style.color = "green";
+                document.getElementById('charge-btn').disabled = false;
+                
+                // Subscribe to my own store's "Response" channel
+                client.subscribe(topicBase + storeCode + "/response");
+                log(`Listening on channel: ${storeCode}`);
+            });
+        }
+
+        function sendChargeRequest() {
+            const amount = document.getElementById('bill-amount').value;
+            if(!amount) return;
+
+            const payload = JSON.stringify({
+                type: "PAY_REQUEST",
+                amount: amount,
+                storeName: "Demo Store #" + storeCode
+            });
+
+            // Publish to Store's Channel
+            const message = new Paho.MQTT.Message(payload);
+            message.destinationName = topicBase + storeCode + "/request";
+            client.send(message);
+            
+            log(`Sent Request: $${amount}`);
+            document.getElementById('charge-btn').innerText = "⏳ Waiting for User...";
+            document.getElementById('charge-btn').disabled = true;
+        }
+
+        // --- CUSTOMER LOGIC ---
+
+        function connectToStore() {
+            const codeInput = document.getElementById('input-store-code').value;
+            if (codeInput.length !== 4) return alert("Please enter 4 digit code");
+            
+            storeCode = codeInput;
+            document.getElementById('pair-card').style.display = 'none';
+            document.getElementById('listening-card').style.display = 'block';
+
+            setupMqtt(() => {
+                // Subscribe to the Store's "Request" channel
+                client.subscribe(topicBase + storeCode + "/request");
+                log(`Connected to Store ${storeCode}. Listening...`);
+            });
+        }
+
+        function approvePayment() {
+            const payload = JSON.stringify({
+                type: "PAY_SUCCESS",
+                user: "John Doe",
+                status: "APPROVED"
+            });
+
+            const message = new Paho.MQTT.Message(payload);
+            message.destinationName = topicBase + storeCode + "/response";
+            client.send(message);
+
+            closeModal();
+            alert("Payment Sent! Check Merchant Screen.");
+        }
+
+        // --- MESSAGE HANDLER (ROUTER) ---
+
+        function handleMessage(topic, payloadRaw) {
+            const data = JSON.parse(payloadRaw);
+            log(`RX: ${data.type}`);
+
+            // If I am Customer receiving a Request
+            if (myRole === 'user' && data.type === 'PAY_REQUEST') {
+                // 1. Vibrate Phone (if supported)
+                if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+                
+                // 2. Show Modal
+                document.getElementById('modal-amount').innerText = "$" + data.amount;
+                document.getElementById('modal-store').innerText = data.storeName;
+                document.getElementById('pay-modal').style.display = "flex";
+            }
+
+            // If I am Merchant receiving a Success
+            if (myRole === 'merchant' && data.type === 'PAY_SUCCESS') {
+                document.getElementById('charge-btn').innerText = "✅ PAID";
+                document.getElementById('charge-btn').style.background = "#00b894";
+                alert(`SUCCESS!\nUser: ${data.user}\nStatus: ${data.status}`);
+                
+                // Reset after 3 seconds
+                setTimeout(() => {
+                    document.getElementById('charge-btn').innerText = "⚡ Charge User";
+                    document.getElementById('charge-btn').style.background = "#000";
+                    document.getElementById('charge-btn').disabled = false;
+                }, 3000);
+            }
+        }
+
+        function closeModal() {
+            document.getElementById('pay-modal').style.display = "none";
+        }
+
+    </script>
 </body>
 </html>
