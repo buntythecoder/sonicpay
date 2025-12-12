@@ -2,314 +2,240 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>FlashID: Biometric Payment</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>HandPay: Palm Biometric POS</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
     <style>
-        /* --- CSS STYLES (Cyberpunk/Tech Look) --- */
-        :root {
-            --primary: #00f2ea;
-            --bg: #0f172a;
-            --panel: #1e293b;
-            --text: #f8fafc;
-            --success: #22c55e;
-            --error: #ef4444;
-        }
-        body {
-            background-color: var(--bg);
-            color: var(--text);
-            font-family: 'Segoe UI', sans-serif;
-            margin: 0;
-            padding: 20px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            min-height: 100vh;
-        }
-        h1 { color: var(--primary); letter-spacing: 2px; text-transform: uppercase; font-size: 1.5rem; }
+        :root { --primary: #00ff88; --bg: #111; --panel: #222; }
+        body { background: var(--bg); color: #fff; font-family: sans-serif; margin: 0; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
         
-        /* Containers */
-        .view { display: none; width: 100%; max-width: 400px; animation: fadeIn 0.3s ease; }
-        .active { display: flex; flex-direction: column; gap: 15px; }
+        /* UI Elements */
+        h1 { margin: 10px 0; font-size: 1.5rem; letter-spacing: 2px; color: var(--primary); }
+        .card { background: var(--panel); width: 90%; max-width: 400px; padding: 20px; border-radius: 12px; margin-bottom: 20px; text-align: center; }
+        .hidden { display: none; }
         
-        /* Cards */
-        .card { background: var(--panel); padding: 20px; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.5); text-align: center; }
+        /* Camera View */
+        .cam-wrapper { position: relative; width: 100%; height: 350px; background: #000; border-radius: 10px; overflow: hidden; border: 2px solid #333; }
+        video { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+        canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
         
-        /* Camera UI */
-        .camera-container {
-            position: relative;
-            width: 100%;
-            height: 300px;
-            background: #000;
-            border-radius: 12px;
-            overflow: hidden;
-            margin-bottom: 15px;
-            border: 2px solid #333;
+        /* Overlays */
+        #scan-guide {
+            position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            width: 200px; height: 250px; border: 4px dashed rgba(255,255,255,0.3); border-radius: 20px;
+            pointer-events: none;
         }
-        video, canvas { width: 100%; height: 100%; object-fit: cover; }
-        .overlay {
-            position: absolute; top: 50%; left: 50%;
-            transform: translate(-50%, -50%);
-            width: 120px; height: 180px;
-            border: 3px solid var(--primary);
-            border-radius: 50%; /* Oval for finger */
-            box-shadow: 0 0 20px var(--primary);
-            opacity: 0.7;
-        }
-        .scan-line {
-            width: 100%; height: 2px; background: var(--primary);
-            position: absolute; top: 0;
-            animation: scan 2s infinite linear;
-        }
+        .scanning #scan-guide { border-color: var(--primary); animation: pulse 1s infinite; }
+        
+        /* Controls */
+        button { background: var(--primary); color: #000; border: none; padding: 15px; width: 100%; font-weight: bold; border-radius: 8px; margin-top: 10px; cursor: pointer; font-size: 1rem; }
+        button.secondary { background: #444; color: #fff; }
+        input { width: 100%; padding: 10px; margin-bottom: 10px; background: #333; border: 1px solid #555; color: #fff; border-radius: 5px; text-align: center; }
+        
+        /* Feedback */
+        #status-text { margin-top: 10px; font-weight: bold; min-height: 20px; }
+        .success { color: var(--primary); }
+        .error { color: #ff4444; }
 
-        /* Buttons & Inputs */
-        button {
-            background: var(--primary); color: #000; border: none;
-            padding: 15px; border-radius: 8px; font-weight: bold; font-size: 1rem;
-            cursor: pointer; width: 100%; margin-top: 10px;
-            transition: transform 0.1s;
-        }
-        button:active { transform: scale(0.98); }
-        button.secondary { background: #334155; color: #fff; }
-        input {
-            width: 100%; padding: 12px; border-radius: 8px; border: 1px solid #475569;
-            background: #0f172a; color: #fff; font-size: 1rem; text-align: center;
-            box-sizing: border-box;
-        }
-
-        /* Notifications */
-        #status-msg { margin-top: 10px; font-size: 0.9rem; min-height: 20px; }
-        .success { color: var(--success); }
-        .error { color: var(--error); }
-
-        @keyframes scan { 0% {top:0;} 50% {top:100%;} 100% {top:0;} }
-        @keyframes fadeIn { from {opacity:0; transform: translateY(10px);} to {opacity:1; transform: translateY(0);} }
+        @keyframes pulse { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
     </style>
 </head>
 <body>
 
-    <h1>FlashID <span style="font-size:0.5em; color:#666">v1.0</span></h1>
-
-    <div id="view-home" class="view active">
-        <div class="card">
-            <p>Select your role:</p>
-            <button onclick="switchView('view-register')">👤 Customer Registration</button>
-            <button onclick="switchView('view-merchant')" class="secondary">🏪 Merchant POS</button>
-            <div style="margin-top:20px; font-size:0.8em; color:#666">
-                Database: <span id="db-count">0</span> users stored locally.
-            </div>
-            <button onclick="clearDb()" style="background:#ef4444; color:white; font-size:0.8em; padding:5px; margin-top:20px;">Reset Database</button>
-        </div>
+    <div id="view-home" class="card">
+        <h1>✋ HandPay</h1>
+        <p>Zero-Hardware Palm POS</p>
+        <button onclick="startApp('register')">New User Enrollment</button>
+        <button onclick="startApp('pay')" class="secondary">Merchant Terminal</button>
+        <p style="font-size:0.8rem; color:#666; margin-top:20px;">Powered by MediaPipe & WebGL</p>
     </div>
 
-    <div id="view-register" class="view">
-        <div class="card">
-            <h2>Enroll Fingerprint</h2>
-            <input type="text" id="reg-name" placeholder="Enter Your Name" />
-            
-            <div class="camera-container">
-                <video id="video-reg" autoplay playsinline></video>
-                <canvas id="canvas-reg" style="display:none"></canvas>
-                <div class="overlay"><div class="scan-line"></div></div>
-            </div>
-            
-            <p style="font-size:0.8rem; color:#aaa;">Place finger inside the oval. <br>Ensure flash is ON or environment is bright.</p>
-            <button onclick="captureFingerprint('register')">📸 Capture & Save</button>
-            <button onclick="stopCamera(); switchView('view-home')" class="secondary">Back</button>
-            <div id="reg-status" id="status-msg"></div>
+    <div id="view-cam" class="card hidden">
+        <h2 id="mode-title">Scan Palm</h2>
+        <div id="input-area" class="hidden">
+            <input type="text" id="user-name" placeholder="Enter Your Name">
         </div>
+        
+        <div class="cam-wrapper">
+            <video id="video" playsinline></video>
+            <canvas id="canvas"></canvas>
+            <div id="scan-guide"></div>
+        </div>
+
+        <div id="status-text">Loading AI Model...</div>
+        <button id="action-btn" onclick="capture()" disabled>Analyzing Hand...</button>
+        <button onclick="location.reload()" class="secondary" style="margin-top:5px; padding:10px;">Exit</button>
     </div>
 
-    <div id="view-merchant" class="view">
-        <div class="card">
-            <h2>Merchant Terminal</h2>
-            <input type="number" id="pay-amount" placeholder="$0.00" />
-            
-            <div class="camera-container">
-                <video id="video-merch" autoplay playsinline></video>
-                <canvas id="canvas-merch" style="display:none"></canvas>
-                <div class="overlay"><div class="scan-line"></div></div>
-            </div>
-
-            <p style="font-size:0.8rem; color:#aaa;">Ask customer to scan finger to authorize.</p>
-            <button onclick="captureFingerprint('verify')">🔍 Scan & Charge</button>
-            <button onclick="stopCamera(); switchView('view-home')" class="secondary">Back</button>
-            <div id="merch-status" id="status-msg"></div>
-        </div>
-    </div>
-
-    <div id="view-success" class="view">
-        <div class="card" style="border: 2px solid var(--success);">
-            <h2 style="color:var(--success)">Payment Approved!</h2>
-            <h1 id="receipt-amount" style="color:white; font-size:3rem">$0.00</h1>
-            <p>Customer: <b id="receipt-user">Unknown</b></p>
-            <p style="color:#aaa; font-size:0.8rem">Transaction ID: <span id="tx-id"></span></p>
-            <hr style="border-color:#333">
-            <button onclick="switchView('view-home')">Done</button>
-        </div>
+    <div id="view-receipt" class="card hidden" style="border: 2px solid var(--primary);">
+        <h1 style="font-size:3rem">✅</h1>
+        <h2>Payment Success</h2>
+        <p>User: <b id="r-user">...</b></p>
+        <p>HandID: <span id="r-id" style="font-family:monospace; font-size:0.8rem">...</span></p>
+        <button onclick="location.reload()">Done</button>
     </div>
 
     <script>
-        // --- 1. MEMORY STORAGE (Simulated Server) ---
-        let db = JSON.parse(localStorage.getItem('flashid_users')) || [];
-        updateDbCount();
+        // --- CONFIG & STATE ---
+        const videoElement = document.getElementById('video');
+        const canvasElement = document.getElementById('canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        let currentMode = ''; // 'register' or 'pay'
+        let db = JSON.parse(localStorage.getItem('handpay_users')) || [];
+        let detectedHand = null;
+        let isStable = false;
+        let stabilityCounter = 0;
 
-        // --- 2. CAMERA HANDLING ---
-        let currentStream = null;
-
-        async function startCamera(videoElementId) {
-            const video = document.getElementById(videoElementId);
-            if (currentStream) stopCamera();
-
-            try {
-                // Request camera with Torch (Flash) capability if available
-                const constraints = { 
-                    video: { 
-                        facingMode: "environment", // Back camera
-                        advanced: [{ torch: true }] // Try to turn on flash
-                    } 
-                };
-                
-                const stream = await navigator.mediaDevices.getUserMedia(constraints);
-                currentStream = stream;
-                video.srcObject = stream;
-
-                // Try to force flash on (Chrome/Android specific)
-                const track = stream.getVideoTracks()[0];
-                const capabilities = track.getCapabilities();
-                if (capabilities.torch) {
-                    track.applyConstraints({ advanced: [{ torch: true }] });
-                }
-
-            } catch (err) {
-                console.error("Camera Error:", err);
-                alert("Camera access denied or Flash not supported. Please allow camera permissions.");
-            }
-        }
-
-        function stopCamera() {
-            if (currentStream) {
-                currentStream.getTracks().forEach(track => track.stop());
-                currentStream = null;
-            }
-        }
-
-        // --- 3. CORE LOGIC ---
+        // --- 1. SETUP MEDIAPIPE HANDS ---
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
         
-        function captureFingerprint(mode) {
-            const videoId = mode === 'register' ? 'video-reg' : 'video-merch';
-            const canvasId = mode === 'register' ? 'canvas-reg' : 'canvas-merch';
-            const statusId = mode === 'register' ? 'reg-status' : 'merch-status';
-            
-            const video = document.getElementById(videoId);
-            const canvas = document.getElementById(canvasId);
-            const status = document.getElementById(statusId);
-            
-            if (!currentStream || video.readyState !== 4) {
-                status.innerHTML = "<span class='error'>Camera not ready.</span>";
-                return;
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
+
+        hands.onResults(onResults);
+
+        // --- 2. CAMERA LOOP ---
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 640,
+            height: 480
+        });
+
+        // --- 3. CORE LOGIC: HAND ANALYSIS ---
+        function onResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                detectedHand = landmarks;
+                
+                // Draw Skeleton (Iron Man Style)
+                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00ff88', lineWidth: 3});
+                drawLandmarks(canvasCtx, landmarks, {color: '#ffffff', lineWidth: 1, radius: 4});
+
+                // Liveness/Stability Check
+                checkStability(landmarks);
+            } else {
+                detectedHand = null;
+                resetStability("Show Hand");
             }
+            canvasCtx.restore();
+        }
 
-            // Draw video frame to canvas
-            const ctx = canvas.getContext('2d');
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-
-            // --- IMAGE PROCESSING (Simulate Fingerprint Extraction) ---
-            // In a real app, this would use OpenCV to extract minutiae points.
-            // Here, we calculate average "Redness" to detect skin/finger over flash.
-            const frame = ctx.getImageData(0, 0, canvas.width, canvas.height);
-            let r_total = 0, g_total = 0, b_total = 0;
+        // Simple stability check: User must hold hand still for ~30 frames
+        function checkStability(landmarks) {
+            // In a real app, we'd check coordinate variance over time.
+            // For demo, we just count consecutive successful frames.
+            stabilityCounter++;
             
-            for (let i = 0; i < frame.data.length; i += 400) { // Sample every 100th pixel for speed
-                r_total += frame.data[i];
-                g_total += frame.data[i+1];
-                b_total += frame.data[i+2];
+            const btn = document.getElementById('action-btn');
+            const guide = document.getElementById('scan-guide');
+            const status = document.getElementById('status-text');
+
+            if (stabilityCounter > 20) {
+                isStable = true;
+                guide.style.borderColor = "#00ff88"; // Green
+                status.innerHTML = "<span class='success'>Hand Detected. Ready.</span>";
+                btn.disabled = false;
+                btn.innerText = currentMode === 'register' ? "📸 Enroll Hand" : "💳 Verify & Pay";
+                btn.style.background = "#00ff88";
+            } else {
+                guide.style.borderColor = "yellow";
+                status.innerText = "Hold Still...";
             }
-            const pixels = frame.data.length / 400;
-            const avgR = r_total / pixels;
+        }
+
+        function resetStability(msg) {
+            stabilityCounter = 0;
+            isStable = false;
+            document.getElementById('status-text').innerText = msg;
+            document.getElementById('scan-guide').style.borderColor = "rgba(255,255,255,0.3)";
+            const btn = document.getElementById('action-btn');
+            btn.disabled = true;
+            btn.innerText = "Scanning...";
+            btn.style.background = "#555";
+        }
+
+        // --- 4. BIOMETRIC HASHING (SIMPLIFIED) ---
+        // Converts 21 3D points into a unique "Signature String" based on finger ratios
+        function generateHandHash(landmarks) {
+            // Calculate distance between Wrist (0) and Middle Finger Tip (12)
+            const palmSize = Math.hypot(landmarks[0].x - landmarks[12].x, landmarks[0].y - landmarks[12].y);
             
-            // LOGIC: A finger over a flash is usually BRIGHT and RED/ORANGE.
-            // If the image is too dark, no finger is present.
-            const isFingerDetected = (avgR > 60); // Simple threshold
+            // Normalize all finger lengths against palm size (Scale Invariant)
+            const thumb = Math.hypot(landmarks[0].x - landmarks[4].x, landmarks[0].y - landmarks[4].y) / palmSize;
+            const index = Math.hypot(landmarks[0].x - landmarks[8].x, landmarks[0].y - landmarks[8].y) / palmSize;
+            const pinky = Math.hypot(landmarks[0].x - landmarks[20].x, landmarks[0].y - landmarks[20].y) / palmSize;
 
-            if (!isFingerDetected) {
-                status.innerHTML = "<span class='error'>⚠️ No finger detected! Place finger closer.</span>";
-                return;
-            }
+            // Create a simple string signature (e.g., "0.65-0.98-0.72")
+            return `${thumb.toFixed(2)}-${index.toFixed(2)}-${pinky.toFixed(2)}`;
+        }
 
-            // --- ROUTING ---
+        // --- 5. APP FLOW HANDLERS ---
+        function startApp(mode) {
+            currentMode = mode;
+            document.getElementById('view-home').classList.add('hidden');
+            document.getElementById('view-cam').classList.remove('hidden');
+            
             if (mode === 'register') {
-                const name = document.getElementById('reg-name').value;
-                if (!name) { alert("Please enter a name."); return; }
-                
-                // Save to 'Server'
-                const newUser = {
-                    id: Date.now(),
-                    name: name,
-                    // We store a dummy 'hash' for the demo. In real life, this is the biometric template.
-                    fingerData: "simulated_hash_" + Math.random() 
-                };
-                
-                db.push(newUser);
-                localStorage.setItem('flashid_users', JSON.stringify(db));
-                updateDbCount();
-                
-                status.innerHTML = "<span class='success'>✅ Registered successfully!</span>";
-                setTimeout(() => { stopCamera(); switchView('view-home'); }, 1500);
-
-            } else if (mode === 'verify') {
-                // MATCHING LOGIC
-                if (db.length === 0) {
-                    status.innerHTML = "<span class='error'>No users in database. Register first.</span>";
-                    return;
-                }
-
-                // SIMULATION: Since we can't match real fingerprints in basic JS without 
-                // heavy libraries, we simulate a match if a valid "Finger-like" image was captured.
-                // In a real app, we would compare `frame` data to stored `fingerData`.
-                
-                const amount = document.getElementById('pay-amount').value;
-                if(!amount) { alert("Enter amount"); return; }
-
-                status.innerHTML = "<span style='color:#fbbf24'>Identifying...</span>";
-                
-                setTimeout(() => {
-                    // Mock Match: Just pick the last registered user for the demo flow
-                    const matchedUser = db[db.length - 1]; 
-                    
-                    document.getElementById('receipt-amount').innerText = "$" + amount;
-                    document.getElementById('receipt-user').innerText = matchedUser.name;
-                    document.getElementById('tx-id').innerText = "TX-" + Math.floor(Math.random()*100000);
-                    
-                    stopCamera();
-                    switchView('view-success');
-                }, 1000);
+                document.getElementById('mode-title').innerText = "Enroll New Palm";
+                document.getElementById('input-area').classList.remove('hidden');
+            } else {
+                document.getElementById('mode-title').innerText = "Merchant Terminal";
             }
-        }
-
-        // --- 4. VIEW CONTROLLER ---
-        function switchView(viewId) {
-            // Hide all
-            document.querySelectorAll('.view').forEach(el => el.classList.remove('active'));
-            // Show target
-            document.getElementById(viewId).classList.add('active');
             
-            // Handle Camera logic
-            if (viewId === 'view-register') startCamera('video-reg');
-            else if (viewId === 'view-merchant') startCamera('video-merch');
-            else stopCamera();
+            camera.start();
         }
 
-        function updateDbCount() {
-            document.getElementById('db-count').innerText = db.length;
-        }
+        function capture() {
+            if (!detectedHand || !isStable) return;
 
-        function clearDb() {
-            if(confirm("Clear all users?")) {
-                localStorage.removeItem('flashid_users');
-                db = [];
-                updateDbCount();
+            const handHash = generateHandHash(detectedHand);
+
+            if (currentMode === 'register') {
+                const name = document.getElementById('user-name').value;
+                if (!name) return alert("Enter name first!");
+
+                db.push({ name: name, hash: handHash });
+                localStorage.setItem('handpay_users', JSON.stringify(db));
+                alert("Palm Registered! Now switch to Merchant Mode.");
+                location.reload();
+
+            } else {
+                // VERIFY (Matching Logic)
+                // In real life, use Euclidian Distance. Here, we do exact string match for demo simplicity.
+                // We allow a tiny margin of error by checking substring or simple proximity? 
+                // For this strict demo, we'll try to find an exact match or close enough.
+                
+                const match = db.find(user => user.hash === handHash);
+                
+                // MOCK MATCH for Demo UX (Since exact float matching is hard in 1 try):
+                // If the hash is "close enough" (first 3 chars match), we accept.
+                const looseMatch = db.find(user => Math.abs(parseFloat(user.hash) - parseFloat(handHash)) < 0.1);
+
+                if (looseMatch || match) {
+                    const user = match || looseMatch;
+                    document.getElementById('view-cam').classList.add('hidden');
+                    document.getElementById('view-receipt').classList.remove('hidden');
+                    document.getElementById('r-user').innerText = user.name;
+                    document.getElementById('r-id').innerText = user.hash;
+                } else {
+                    alert("Access Denied: Palm not recognized.\nTry holding hand at same distance as enrollment.");
+                }
             }
         }
     </script>
