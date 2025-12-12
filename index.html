@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>HandPay: Palm Biometric POS</title>
+    <title>HandPay: Secure Palm POS</title>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/control_utils/control_utils.js" crossorigin="anonymous"></script>
     <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js" crossorigin="anonymous"></script>
@@ -29,29 +29,27 @@
             width: 200px; height: 250px; border: 4px dashed rgba(255,255,255,0.3); border-radius: 20px;
             pointer-events: none;
         }
-        .scanning #scan-guide { border-color: var(--primary); animation: pulse 1s infinite; }
         
         /* Controls */
         button { background: var(--primary); color: #000; border: none; padding: 15px; width: 100%; font-weight: bold; border-radius: 8px; margin-top: 10px; cursor: pointer; font-size: 1rem; }
+        button:disabled { background: #555; cursor: not-allowed; }
         button.secondary { background: #444; color: #fff; }
         input { width: 100%; padding: 10px; margin-bottom: 10px; background: #333; border: 1px solid #555; color: #fff; border-radius: 5px; text-align: center; }
         
         /* Feedback */
-        #status-text { margin-top: 10px; font-weight: bold; min-height: 20px; }
+        #status-text { margin-top: 10px; font-weight: bold; min-height: 20px; font-size: 0.9rem; }
         .success { color: var(--primary); }
         .error { color: #ff4444; }
-
-        @keyframes pulse { 0% { opacity: 0.5; } 50% { opacity: 1; } 100% { opacity: 0.5; } }
     </style>
 </head>
 <body>
 
     <div id="view-home" class="card">
-        <h1>✋ HandPay</h1>
-        <p>Zero-Hardware Palm POS</p>
+        <h1>✋ HandPay v2</h1>
+        <p>Secure Palm Biometrics</p>
         <button onclick="startApp('register')">New User Enrollment</button>
         <button onclick="startApp('pay')" class="secondary">Merchant Terminal</button>
-        <p style="font-size:0.8rem; color:#666; margin-top:20px;">Powered by MediaPipe & WebGL</p>
+        <p style="font-size:0.8rem; color:#666; margin-top:20px;">Powered by MediaPipe</p>
     </div>
 
     <div id="view-cam" class="card hidden">
@@ -66,118 +64,187 @@
             <div id="scan-guide"></div>
         </div>
 
-        <div id="status-text">Loading AI Model...</div>
-        <button id="action-btn" onclick="capture()" disabled>Analyzing Hand...</button>
+        <div id="status-text">Starting Camera...</div>
+        <button id="action-btn" onclick="capture()" disabled>Wait for Hand...</button>
         <button onclick="location.reload()" class="secondary" style="margin-top:5px; padding:10px;">Exit</button>
     </div>
 
     <div id="view-receipt" class="card hidden" style="border: 2px solid var(--primary);">
         <h1 style="font-size:3rem">✅</h1>
-        <h2>Payment Success</h2>
+        <h2>Approved</h2>
         <p>User: <b id="r-user">...</b></p>
-        <p>HandID: <span id="r-id" style="font-family:monospace; font-size:0.8rem">...</span></p>
+        <p style="color:#aaa; font-size:0.8rem">ID: <span id="r-id">...</span></p>
         <button onclick="location.reload()">Done</button>
     </div>
 
     <script>
-        // --- CONFIG & STATE ---
-      // --- 3. CORE LOGIC: HAND ANALYSIS ---
-    function onResults(results) {
-        canvasCtx.save();
-        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+        // --- 1. CONFIG & STATE ---
+        const videoElement = document.getElementById('video');
+        const canvasElement = document.getElementById('canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        let currentMode = ''; 
+        let db = JSON.parse(localStorage.getItem('handpay_users')) || [];
+        let detectedHand = null;
+        let isStable = false;
+        let stabilityCounter = 0;
 
-        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-            const landmarks = results.multiHandLandmarks[0];
-            
-            // --- SECURITY FIX 1: DETECT HANDEDNESS ---
-            // MediaPipe returns 'Left' or 'Right'. Note: Selfie mode mirrors it, so we flip logic if needed.
-            const classification = results.multiHandedness[0].label; 
-            const detectedLabel = classification === 'Right' ? 'Left' : 'Right'; // Flip for selfie camera mirror effect
-
-            detectedHand = { landmarks, label: detectedLabel };
-
-            // Visual Feedback
-            drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00ff88', lineWidth: 3});
-            drawLandmarks(canvasCtx, landmarks, {color: '#ffffff', lineWidth: 1, radius: 4});
-
-            // Display "Right Hand" or "Left Hand" on screen
-            canvasCtx.font = "20px Arial";
-            canvasCtx.fillStyle = "yellow";
-            canvasCtx.fillText(detectedLabel + " Hand Detected", 10, 30);
-
-            checkStability(landmarks);
-        } else {
-            detectedHand = null;
-            resetStability("Show Hand");
-        }
-        canvasCtx.restore();
-    }
-
-    // --- 4. BIOMETRIC HASHING (UPDATED) ---
-    function generateHandHash(landmarks, handLabel) {
-        // 1. Geometry Ratio (The Skeleton)
-        const palmSize = Math.hypot(landmarks[0].x - landmarks[12].x, landmarks[0].y - landmarks[12].y);
-        const thumb = (Math.hypot(landmarks[0].x - landmarks[4].x, landmarks[0].y - landmarks[4].y) / palmSize).toFixed(2);
-        const index = (Math.hypot(landmarks[0].x - landmarks[8].x, landmarks[0].y - landmarks[8].y) / palmSize).toFixed(2);
+        // --- 2. MEDIAPIPE SETUP ---
+        const hands = new Hands({locateFile: (file) => {
+            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+        }});
         
-        // 2. The "Handedness" Salt (Crucial Fix)
-        // We add the label (Left/Right) into the hash string. 
-        // "Left-0.65..." is TOTALLY different from "Right-0.65..."
-        return `${handLabel}|${thumb}-${index}`;
-    }
+        hands.setOptions({
+            maxNumHands: 1,
+            modelComplexity: 1,
+            minDetectionConfidence: 0.7,
+            minTrackingConfidence: 0.7
+        });
 
-    function capture() {
-        if (!detectedHand || !isStable) return;
+        hands.onResults(onResults);
 
-        // Generate Hash with the Hand Label (Left/Right) embedded
-        const handHash = generateHandHash(detectedHand.landmarks, detectedHand.label);
+        const camera = new Camera(videoElement, {
+            onFrame: async () => {
+                await hands.send({image: videoElement});
+            },
+            width: 640,
+            height: 480
+        });
 
-        if (currentMode === 'register') {
-            const name = document.getElementById('user-name').value;
-            if (!name) return alert("Enter name first!");
-
-            db.push({ name: name, hash: handHash });
-            localStorage.setItem('handpay_users', JSON.stringify(db));
-            alert(`Success! Registered ${detectedHand.label} Hand.`);
-            location.reload();
-
-        } else {
-            // VERIFY
-            // Now we check exact string match. 
-            // If user Registered "Right|0.65" and shows "Left|0.65", this will FAIL.
-            const match = db.find(user => user.hash === handHash);
-
-            // Fuzzy match for geometry only (ignore small jitter), but ENFORCE Handedness
-            const fuzzyMatch = db.find(user => {
-                const [dbHand, dbGeo] = user.hash.split('|');
-                const [liveHand, liveGeo] = handHash.split('|');
-
-                // SECURITY CHECK: Handedness MUST match exactly
-                if (dbHand !== liveHand) return false;
-
-                // Geometry Check
-                const diff = Math.abs(parseFloat(dbGeo) - parseFloat(liveGeo));
-                return diff < 0.15; // Tolerance
-            });
-
-            if (match || fuzzyMatch) {
-                const user = match || fuzzyMatch;
-                document.getElementById('view-cam').classList.add('hidden');
-                document.getElementById('view-receipt').classList.remove('hidden');
-                document.getElementById('r-user').innerText = user.name;
-                document.getElementById('r-id').innerText = user.hash;
+        // --- 3. APP FUNCTIONS (The Missing Link) ---
+        function startApp(mode) {
+            currentMode = mode;
+            document.getElementById('view-home').classList.add('hidden');
+            document.getElementById('view-cam').classList.remove('hidden');
+            
+            if (mode === 'register') {
+                document.getElementById('mode-title').innerText = "Enroll New Palm";
+                document.getElementById('input-area').classList.remove('hidden');
             } else {
-                // Specific Error Message
-                const wrongHand = db.find(u => u.hash.split('|')[1] === handHash.split('|')[1]);
-                if (wrongHand) {
-                     alert("⚠️ SECURITY ALERT: Wrong Hand! Please use the hand you registered with.");
+                document.getElementById('mode-title').innerText = "Merchant Terminal";
+            }
+            
+            camera.start();
+        }
+
+        function resetStability(msg) {
+            stabilityCounter = 0;
+            isStable = false;
+            document.getElementById('status-text').innerText = msg;
+            document.getElementById('scan-guide').style.borderColor = "rgba(255,255,255,0.3)";
+            const btn = document.getElementById('action-btn');
+            btn.disabled = true;
+            btn.innerText = "Hold Steady...";
+            btn.style.background = "#555";
+        }
+
+        function checkStability(landmarks) {
+            stabilityCounter++;
+            const btn = document.getElementById('action-btn');
+            const guide = document.getElementById('scan-guide');
+            const status = document.getElementById('status-text');
+
+            if (stabilityCounter > 20) { // Require ~1 second of stillness
+                isStable = true;
+                guide.style.borderColor = "#00ff88"; // Green
+                status.innerHTML = "<span class='success'>Hand Locked. Ready.</span>";
+                btn.disabled = false;
+                btn.innerText = currentMode === 'register' ? "📸 Capture & Save" : "💳 Verify Payment";
+                btn.style.background = "#00ff88";
+            } else {
+                guide.style.borderColor = "yellow";
+                status.innerText = "Hold Still...";
+            }
+        }
+
+        // --- 4. CORE LOGIC: HAND ANALYSIS ---
+        function onResults(results) {
+            canvasCtx.save();
+            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+
+            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+                const landmarks = results.multiHandLandmarks[0];
+                
+                // --- DETECT HANDEDNESS (Left vs Right) ---
+                const classification = results.multiHandedness[0].label; 
+                // Selfie camera mirrors image, so we flip the label logic
+                const detectedLabel = classification === 'Right' ? 'Left' : 'Right'; 
+
+                detectedHand = { landmarks, label: detectedLabel };
+
+                // Draw Skeleton
+                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00ff88', lineWidth: 3});
+                drawLandmarks(canvasCtx, landmarks, {color: '#ffffff', lineWidth: 1, radius: 4});
+
+                // Display "Right Hand" or "Left Hand"
+                canvasCtx.font = "20px Arial";
+                canvasCtx.fillStyle = "yellow";
+                canvasCtx.fillText(detectedLabel + " Hand", 10, 30);
+
+                checkStability(landmarks);
+            } else {
+                detectedHand = null;
+                resetStability("Show Hand");
+            }
+            canvasCtx.restore();
+        }
+
+        // --- 5. HASHING & MATCHING ---
+        function generateHandHash(landmarks, handLabel) {
+            const palmSize = Math.hypot(landmarks[0].x - landmarks[12].x, landmarks[0].y - landmarks[12].y);
+            const thumb = (Math.hypot(landmarks[0].x - landmarks[4].x, landmarks[0].y - landmarks[4].y) / palmSize).toFixed(2);
+            const index = (Math.hypot(landmarks[0].x - landmarks[8].x, landmarks[0].y - landmarks[8].y) / palmSize).toFixed(2);
+            
+            // Includes Hand Label in hash to prevent "Wrong Hand" spoofing
+            return `${handLabel}|${thumb}-${index}`;
+        }
+
+        function capture() {
+            if (!detectedHand || !isStable) return;
+
+            const handHash = generateHandHash(detectedHand.landmarks, detectedHand.label);
+
+            if (currentMode === 'register') {
+                const name = document.getElementById('user-name').value;
+                if (!name) return alert("Enter name first!");
+
+                db.push({ name: name, hash: handHash });
+                localStorage.setItem('handpay_users', JSON.stringify(db));
+                alert(`Registered ${detectedHand.label} Hand Successfully!`);
+                location.reload();
+
+            } else {
+                // VERIFY LOGIC
+                // 1. Exact Match Check
+                const match = db.find(user => user.hash === handHash);
+
+                // 2. Fuzzy Match (Geometry Tolerance) + Handedness Check
+                const fuzzyMatch = db.find(user => {
+                    const [dbHand, dbGeo] = user.hash.split('|');
+                    const [liveHand, liveGeo] = handHash.split('|');
+
+                    if (dbHand !== liveHand) return false; // Handedness must match!
+
+                    const diff = Math.abs(parseFloat(dbGeo) - parseFloat(liveGeo));
+                    return diff < 0.15; // Allow small movement variations
+                });
+
+                if (match || fuzzyMatch) {
+                    const user = match || fuzzyMatch;
+                    document.getElementById('view-cam').classList.add('hidden');
+                    document.getElementById('view-receipt').classList.remove('hidden');
+                    document.getElementById('r-user').innerText = user.name;
+                    document.getElementById('r-id').innerText = user.hash;
                 } else {
-                     alert("Access Denied: Hand not recognized.");
+                    const wrongHand = db.find(u => u.hash.split('|')[1] === handHash.split('|')[1]);
+                    if (wrongHand) {
+                         alert("⚠️ Wrong Hand! Use the hand you registered with.");
+                    } else {
+                         alert("Access Denied: Palm not recognized.");
+                    }
                 }
             }
         }
-    }
     </script>
 </body>
 </html>
