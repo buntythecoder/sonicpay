@@ -81,163 +81,103 @@
 
     <script>
         // --- CONFIG & STATE ---
-        const videoElement = document.getElementById('video');
-        const canvasElement = document.getElementById('canvas');
-        const canvasCtx = canvasElement.getContext('2d');
-        let currentMode = ''; // 'register' or 'pay'
-        let db = JSON.parse(localStorage.getItem('handpay_users')) || [];
-        let detectedHand = null;
-        let isStable = false;
-        let stabilityCounter = 0;
+      // --- 3. CORE LOGIC: HAND ANALYSIS ---
+    function onResults(results) {
+        canvasCtx.save();
+        canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
+        canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
 
-        // --- 1. SETUP MEDIAPIPE HANDS ---
-        const hands = new Hands({locateFile: (file) => {
-            return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
-        }});
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const landmarks = results.multiHandLandmarks[0];
+            
+            // --- SECURITY FIX 1: DETECT HANDEDNESS ---
+            // MediaPipe returns 'Left' or 'Right'. Note: Selfie mode mirrors it, so we flip logic if needed.
+            const classification = results.multiHandedness[0].label; 
+            const detectedLabel = classification === 'Right' ? 'Left' : 'Right'; // Flip for selfie camera mirror effect
+
+            detectedHand = { landmarks, label: detectedLabel };
+
+            // Visual Feedback
+            drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00ff88', lineWidth: 3});
+            drawLandmarks(canvasCtx, landmarks, {color: '#ffffff', lineWidth: 1, radius: 4});
+
+            // Display "Right Hand" or "Left Hand" on screen
+            canvasCtx.font = "20px Arial";
+            canvasCtx.fillStyle = "yellow";
+            canvasCtx.fillText(detectedLabel + " Hand Detected", 10, 30);
+
+            checkStability(landmarks);
+        } else {
+            detectedHand = null;
+            resetStability("Show Hand");
+        }
+        canvasCtx.restore();
+    }
+
+    // --- 4. BIOMETRIC HASHING (UPDATED) ---
+    function generateHandHash(landmarks, handLabel) {
+        // 1. Geometry Ratio (The Skeleton)
+        const palmSize = Math.hypot(landmarks[0].x - landmarks[12].x, landmarks[0].y - landmarks[12].y);
+        const thumb = (Math.hypot(landmarks[0].x - landmarks[4].x, landmarks[0].y - landmarks[4].y) / palmSize).toFixed(2);
+        const index = (Math.hypot(landmarks[0].x - landmarks[8].x, landmarks[0].y - landmarks[8].y) / palmSize).toFixed(2);
         
-        hands.setOptions({
-            maxNumHands: 1,
-            modelComplexity: 1,
-            minDetectionConfidence: 0.7,
-            minTrackingConfidence: 0.7
-        });
+        // 2. The "Handedness" Salt (Crucial Fix)
+        // We add the label (Left/Right) into the hash string. 
+        // "Left-0.65..." is TOTALLY different from "Right-0.65..."
+        return `${handLabel}|${thumb}-${index}`;
+    }
 
-        hands.onResults(onResults);
+    function capture() {
+        if (!detectedHand || !isStable) return;
 
-        // --- 2. CAMERA LOOP ---
-        const camera = new Camera(videoElement, {
-            onFrame: async () => {
-                await hands.send({image: videoElement});
-            },
-            width: 640,
-            height: 480
-        });
+        // Generate Hash with the Hand Label (Left/Right) embedded
+        const handHash = generateHandHash(detectedHand.landmarks, detectedHand.label);
 
-        // --- 3. CORE LOGIC: HAND ANALYSIS ---
-        function onResults(results) {
-            canvasCtx.save();
-            canvasCtx.clearRect(0, 0, canvasElement.width, canvasElement.height);
-            canvasCtx.drawImage(results.image, 0, 0, canvasElement.width, canvasElement.height);
+        if (currentMode === 'register') {
+            const name = document.getElementById('user-name').value;
+            if (!name) return alert("Enter name first!");
 
-            if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-                const landmarks = results.multiHandLandmarks[0];
-                detectedHand = landmarks;
-                
-                // Draw Skeleton (Iron Man Style)
-                drawConnectors(canvasCtx, landmarks, HAND_CONNECTIONS, {color: '#00ff88', lineWidth: 3});
-                drawLandmarks(canvasCtx, landmarks, {color: '#ffffff', lineWidth: 1, radius: 4});
+            db.push({ name: name, hash: handHash });
+            localStorage.setItem('handpay_users', JSON.stringify(db));
+            alert(`Success! Registered ${detectedHand.label} Hand.`);
+            location.reload();
 
-                // Liveness/Stability Check
-                checkStability(landmarks);
+        } else {
+            // VERIFY
+            // Now we check exact string match. 
+            // If user Registered "Right|0.65" and shows "Left|0.65", this will FAIL.
+            const match = db.find(user => user.hash === handHash);
+
+            // Fuzzy match for geometry only (ignore small jitter), but ENFORCE Handedness
+            const fuzzyMatch = db.find(user => {
+                const [dbHand, dbGeo] = user.hash.split('|');
+                const [liveHand, liveGeo] = handHash.split('|');
+
+                // SECURITY CHECK: Handedness MUST match exactly
+                if (dbHand !== liveHand) return false;
+
+                // Geometry Check
+                const diff = Math.abs(parseFloat(dbGeo) - parseFloat(liveGeo));
+                return diff < 0.15; // Tolerance
+            });
+
+            if (match || fuzzyMatch) {
+                const user = match || fuzzyMatch;
+                document.getElementById('view-cam').classList.add('hidden');
+                document.getElementById('view-receipt').classList.remove('hidden');
+                document.getElementById('r-user').innerText = user.name;
+                document.getElementById('r-id').innerText = user.hash;
             } else {
-                detectedHand = null;
-                resetStability("Show Hand");
-            }
-            canvasCtx.restore();
-        }
-
-        // Simple stability check: User must hold hand still for ~30 frames
-        function checkStability(landmarks) {
-            // In a real app, we'd check coordinate variance over time.
-            // For demo, we just count consecutive successful frames.
-            stabilityCounter++;
-            
-            const btn = document.getElementById('action-btn');
-            const guide = document.getElementById('scan-guide');
-            const status = document.getElementById('status-text');
-
-            if (stabilityCounter > 20) {
-                isStable = true;
-                guide.style.borderColor = "#00ff88"; // Green
-                status.innerHTML = "<span class='success'>Hand Detected. Ready.</span>";
-                btn.disabled = false;
-                btn.innerText = currentMode === 'register' ? "📸 Enroll Hand" : "💳 Verify & Pay";
-                btn.style.background = "#00ff88";
-            } else {
-                guide.style.borderColor = "yellow";
-                status.innerText = "Hold Still...";
-            }
-        }
-
-        function resetStability(msg) {
-            stabilityCounter = 0;
-            isStable = false;
-            document.getElementById('status-text').innerText = msg;
-            document.getElementById('scan-guide').style.borderColor = "rgba(255,255,255,0.3)";
-            const btn = document.getElementById('action-btn');
-            btn.disabled = true;
-            btn.innerText = "Scanning...";
-            btn.style.background = "#555";
-        }
-
-        // --- 4. BIOMETRIC HASHING (SIMPLIFIED) ---
-        // Converts 21 3D points into a unique "Signature String" based on finger ratios
-        function generateHandHash(landmarks) {
-            // Calculate distance between Wrist (0) and Middle Finger Tip (12)
-            const palmSize = Math.hypot(landmarks[0].x - landmarks[12].x, landmarks[0].y - landmarks[12].y);
-            
-            // Normalize all finger lengths against palm size (Scale Invariant)
-            const thumb = Math.hypot(landmarks[0].x - landmarks[4].x, landmarks[0].y - landmarks[4].y) / palmSize;
-            const index = Math.hypot(landmarks[0].x - landmarks[8].x, landmarks[0].y - landmarks[8].y) / palmSize;
-            const pinky = Math.hypot(landmarks[0].x - landmarks[20].x, landmarks[0].y - landmarks[20].y) / palmSize;
-
-            // Create a simple string signature (e.g., "0.65-0.98-0.72")
-            return `${thumb.toFixed(2)}-${index.toFixed(2)}-${pinky.toFixed(2)}`;
-        }
-
-        // --- 5. APP FLOW HANDLERS ---
-        function startApp(mode) {
-            currentMode = mode;
-            document.getElementById('view-home').classList.add('hidden');
-            document.getElementById('view-cam').classList.remove('hidden');
-            
-            if (mode === 'register') {
-                document.getElementById('mode-title').innerText = "Enroll New Palm";
-                document.getElementById('input-area').classList.remove('hidden');
-            } else {
-                document.getElementById('mode-title').innerText = "Merchant Terminal";
-            }
-            
-            camera.start();
-        }
-
-        function capture() {
-            if (!detectedHand || !isStable) return;
-
-            const handHash = generateHandHash(detectedHand);
-
-            if (currentMode === 'register') {
-                const name = document.getElementById('user-name').value;
-                if (!name) return alert("Enter name first!");
-
-                db.push({ name: name, hash: handHash });
-                localStorage.setItem('handpay_users', JSON.stringify(db));
-                alert("Palm Registered! Now switch to Merchant Mode.");
-                location.reload();
-
-            } else {
-                // VERIFY (Matching Logic)
-                // In real life, use Euclidian Distance. Here, we do exact string match for demo simplicity.
-                // We allow a tiny margin of error by checking substring or simple proximity? 
-                // For this strict demo, we'll try to find an exact match or close enough.
-                
-                const match = db.find(user => user.hash === handHash);
-                
-                // MOCK MATCH for Demo UX (Since exact float matching is hard in 1 try):
-                // If the hash is "close enough" (first 3 chars match), we accept.
-                const looseMatch = db.find(user => Math.abs(parseFloat(user.hash) - parseFloat(handHash)) < 0.1);
-
-                if (looseMatch || match) {
-                    const user = match || looseMatch;
-                    document.getElementById('view-cam').classList.add('hidden');
-                    document.getElementById('view-receipt').classList.remove('hidden');
-                    document.getElementById('r-user').innerText = user.name;
-                    document.getElementById('r-id').innerText = user.hash;
+                // Specific Error Message
+                const wrongHand = db.find(u => u.hash.split('|')[1] === handHash.split('|')[1]);
+                if (wrongHand) {
+                     alert("⚠️ SECURITY ALERT: Wrong Hand! Please use the hand you registered with.");
                 } else {
-                    alert("Access Denied: Palm not recognized.\nTry holding hand at same distance as enrollment.");
+                     alert("Access Denied: Hand not recognized.");
                 }
             }
         }
+    }
     </script>
 </body>
 </html>
